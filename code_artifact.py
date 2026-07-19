@@ -1,0 +1,195 @@
+import streamlit as st
+import datetime
+import json
+import os
+
+# ضبط إعدادات الصفحة الافتراضية
+st.set_page_config(
+    page_title="نظام العيادة الذكي لإدارة المواعيد",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# دعم اللغة العربية والاتجاه من اليمين إلى اليسار (RTL) عبر ستايل مخصص
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
+    
+    html, body, [class*="css"], .stMarkdown, p, h1, h2, h3, h4, h5, h6, label, span, button {
+        font-family: 'Tajawal', sans-serif !important;
+        text-align: right;
+        direction: rtl;
+    }
+    .stButton>button {
+        width: 100%;
+        background-color: #0b57d0 !important;
+        color: white !important;
+        border-radius: 8px !important;
+        font-weight: bold !important;
+    }
+    .status-pill {
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 13px;
+        display: inline-block;
+    }
+    .status-upcoming { background-color: #e3f2fd; color: #0d47a1; }
+    .status-now { background-color: #fff3e0; color: #e65100; }
+    .status-past { background-color: #ffebee; color: #c62828; }
+    </style>
+""", unsafe_allow_html=True)
+
+# مسار ملف حفظ البيانات
+DB_FILE = "appointments.json"
+
+def load_data():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
+    return [
+        {"id": 1, "name": "أحمد العتيبي", "doctor": "د. أحمد (طب الأطفال)", "date": str(datetime.date.today()), "time": "10:00"},
+        {"id": 2, "name": "سارة أحمد", "doctor": "د. سارة (الأمراض الجلدية)", "date": str(datetime.date.today()), "time": "11:00"},
+        {"id": 3, "name": "خالد الحربي", "doctor": "د. خالد (طب الأسنان)", "date": str(datetime.date.today() - datetime.timedelta(days=1)), "time": "09:00"}
+    ]
+
+def save_data(data):
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+if 'appointments' not in st.session_state:
+    st.session_state.appointments = load_data()
+
+# قائمة الأطباء المتاحة
+DOCTORS = [
+    "د. أحمد (طب الأطفال)",
+    "د. سارة (الأمراض الجلدية)",
+    "د. خالد (طب الأسنان)"
+]
+
+# الساعات المتاحة للحجز
+TIMES = [
+    "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00"
+]
+
+def get_appointment_status(date_str, time_str):
+    try:
+        appt_datetime = datetime.datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        now = datetime.datetime.now()
+        
+        # حان الآن إذا كان في نفس الساعة الحالية
+        if appt_datetime.date() == now.date() and appt_datetime.hour == now.hour:
+            return "حان الآن"
+        elif appt_datetime < now:
+            return "مضى"
+        else:
+            return "قادم"
+    except:
+        return "قادم"
+
+st.title("🏥 نظام العيادة الطبية الذكي لإدارة المواعيد")
+st.write("تنظيم فوري للمرضى، منع تداخل المواعيد، وإعادة جدولة تلقائية ذكية.")
+
+# لوحة إحصاءات سريعة
+appointments = st.session_state.appointments
+total_appt = len(appointments)
+active_today = sum(1 for a in appointments if a['date'] == str(datetime.date.today()) and get_appointment_status(a['date'], a['time']) != "مضى")
+completed_appt = sum(1 for a in appointments if get_appointment_status(a['date'], a['time']) == "مضى")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("📊 إجمالي الحجوزات", total_appt)
+with col2:
+    st.metric("🟢 مواعيد نشطة اليوم", active_today)
+with col3:
+    st.metric("🔴 مواعيد منتهية ومضت", completed_appt)
+
+st.write("---")
+
+# تقسيم الواجهة إلى نموذج الإدخال وجدول المواعيد
+col_input, col_table = st.columns([1, 2])
+
+with col_input:
+    st.subheader("📝 تسجيل موعد جديد")
+    
+    patient_name = st.text_input("اسم المريض الثلاثي:")
+    doctor_selected = st.selectbox("اختر الطبيب / التخصص:", DOCTORS)
+    appt_date = st.date_input("تاريخ الحجز:", datetime.date.today())
+    appt_time = st.selectbox("اختر ساعة الحجز:", TIMES)
+    
+    if st.button("تأكيد الحجز الذكي"):
+        if not patient_name.strip():
+            st.error("يرجى إدخال اسم المريض أولاً.")
+        else:
+            # التحقق من عدم تداخل المواعيد لنفس الطبيب في نفس اليوم والساعة
+            overlap = False
+            for appt in appointments:
+                if (appt['doctor'] == doctor_selected and 
+                    appt['date'] == str(appt_date) and 
+                    appt['time'] == appt_time):
+                    overlap = True
+                    break
+            
+            if overlap:
+                st.error(f"❌ عذراً! {doctor_selected} لديه حجز بالفعل في هذا التوقيت ({appt_time} - {appt_date}). يرجى اختيار ساعة أخرى.")
+            else:
+                # إضافة الموعد بنجاح
+                new_id = max([a['id'] for a in appointments], default=0) + 1
+                new_appt = {
+                    "id": new_id,
+                    "name": patient_name,
+                    "doctor": doctor_selected,
+                    "date": str(appt_date),
+                    "time": appt_time
+                }
+                st.session_state.appointments.insert(0, new_appt)
+                save_data(st.session_state.appointments)
+                st.success(f"✅ تم تسجيل موعد المريض {patient_name} بنجاح مع {doctor_selected}!")
+                st.rerun()
+
+with col_table:
+    st.subheader("📅 قائمة مواعيد العيادة")
+    
+    if not appointments:
+        st.info("لا توجد مواعيد مسجلة حالياً.")
+    else:
+        for idx, appt in enumerate(appointments):
+            status = get_appointment_status(appt['date'], appt['time'])
+            
+            # تحديد الاستايل واللون المناسب بناءً على الحالة
+            if status == "قادم":
+                status_html = f'<span class="status-pill status-upcoming">🟢 {status}</span>'
+            elif status == "حان الآن":
+                status_html = f'<span class="status-pill status-now">🟠 {status}</span>'
+            else:
+                status_html = f'<span class="status-pill status-past">🔴 {status}</span>'
+                
+            # عرض بطاقة الموعد
+            with st.container():
+                c1, c2, c3, c4 = st.columns([2, 1.5, 1, 1])
+                with c1:
+                    st.markdown(f"**👤 {appt['name']}**<br><small>👨‍⚕️ {appt['doctor']}</small>", unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"📅 {appt['date']}<br>⏰ {appt['time']}", unsafe_allow_html=True)
+                with c3:
+                    st.markdown(status_html, unsafe_allow_html=True)
+                with c4:
+                    if status == "مضى":
+                        # زر إعادة جدولة ذكي بضغطة زر
+                        if st.button("🔄 إعادة جدولة", key=f"resched_{appt['id']}"):
+                            # جدولة الموعد إلى يوم الغد تلقائياً في نفس التوقيت
+                            tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+                            appt['date'] = str(tomorrow)
+                            save_data(st.session_state.appointments)
+                            st.success("تمت إعادة الجدولة لليوم التالي تلقائياً!")
+                            st.rerun()
+                    else:
+                        if st.button("🗑️ إلغاء", key=f"del_{appt['id']}"):
+                            st.session_state.appointments.remove(appt)
+                            save_data(st.session_state.appointments)
+                            st.rerun()
+                st.markdown("<hr style='margin:10px 0; border-color:#eee;'>", unsafe_allow_html=True)
